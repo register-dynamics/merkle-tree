@@ -60,7 +60,7 @@
 (import chicken scheme)
 
 ; Units - http://api.call-cc.org/doc/chicken/language
-(use data-structures)
+(use data-structures srfi-1)
 
 ; Eggs - http://wiki.call-cc.org/chicken-projects/egg-index-4.html
 (use dyn-vector message-digest)
@@ -87,37 +87,72 @@
 ;;; Supporting ADTs
 
 ;;; Backing store for the data in a Merkle Hash Tree.
-;;; For now we store the data in a dyn-vector but later we might want to store
-;;; it somewhere more persistent.
 
-; Makes a backing store that uses a dyn-vector.
-(define (make-dyn-vector-backing-store) (make-dynvector 0 #f))
+(define (make-backing-store #!key store ref size levels count-leaves-in-range)
+  `(backing-store
+     ,store
+     ,ref
+     ,size
+     ,levels
+     ,count-leaves-in-range))
 
-(define (dynvector->dyn-vector-backing-store dynvector) dynvector)
+(define (backing-store? store)
+ (and
+  (list? store)
+  (= 6 (length store))
+  (eqv? 'backing-store (car store))))
 
 ; Takes a backing store and returns the ref procedure for it.
 ; ref must be a procedure of two arguments: the handle for the store and the
 ; index of the element being referenced.
-(define (backing-store-ref   store) (cut dynvector-ref store <>))
+(define backing-store-ref   third)
 
 ; Takes a backing store and returns a handle for the underlying data storage.
-(define (backing-store-store store) store)
+(define backing-store-store second)
 
-(define (backing-store-size  store) dynvector-length)
+; Returns the actual number of leaves in the backing store, not the size of the
+; allocated storage.
+(define (backing-store-size store)
+  (assert (backing-store? store))
+  ((fourth store)))
 
+; Returns the number of levels of hash nodes in the tree. For dense trees this
+; is related to the current size of the tree. For sparse trees it will be
+; specified when the tree is declared.
 (define (backing-store-levels store)
-  (lambda (store)
-    (let ((size ((backing-store-size store) store)))
-      (if (= 0 size)
-	0
-	(ceiling (log2 size))))))
+  (assert (backing-store? store))
+  ((fifth store)))
 
-; For a dense Merkle Tree stored in a dyn-vector every leaf is always present
-(define (backing-store-count-leaves-in-range store)
-  (lambda (start end)
-    (assert (<= end ((backing-store-size store) store)))
-    (assert (<= start end))
-    (- end start)))
+; Returns a procedure of two arguments that, when called, will return the
+; number of leaves between the two leaf indexes specifiec for the appropriate
+; backing store.
+(define backing-store-count-leaves-in-range sixth)
+
+
+;;; A quick and dirty backing store that uses a dyn-vector.
+;;; For now we store the data in a dyn-vector but later we might want to store
+;;; it somewhere more persistent.
+
+; Makes a backing store that uses a dyn-vector.
+(define (make-dyn-vector-backing-store #!optional (vector (make-dynvector 0 #f)))
+  (make-backing-store
+    store:  vector
+    ref:    (cut dynvector-ref    vector <>)
+    size:   (cut dynvector-length vector)
+    levels: (lambda ()
+	      (let ((size (dynvector-length vector)))
+		(if (= 0 size)
+		  0
+		  (ceiling (log2 size)))))
+    count-leaves-in-range: (lambda (start end)
+			     ; For a dense Merkle Tree stored in a dyn-vector every leaf is always present
+			     (assert (<= end   (dynvector-length vector)))
+			     (assert (<= start end))
+			     (- end start))))
+
+(define (dynvector->dyn-vector-backing-store dynvector)
+  (make-dyn-vector-backing-store dynvector))
+
 
 
 
@@ -129,6 +164,8 @@
 
 ; Allocates a new Merkle Hash Tree
 (define (make-merkle-tree digest-primitive backing-store)
+  (assert (backing-store? backing-store))
+
   `(merkle-tree
      (digest-primitive . ,(digest-primitive))
      (backing-store    . ,backing-store)))
@@ -157,13 +194,13 @@
 (define (merkle-tree-size tree)
   (assert (merkle-tree? tree))
   (let ((store (merkle-tree-backing-store tree)))
-    ((backing-store-size store) store)))
+    (backing-store-size store)))
 
 ; Returns the number of levels of interior nodes in the tree
 (define (merkle-tree-levels tree)
   (assert (merkle-tree? tree))
   (let ((store (merkle-tree-backing-store tree)))
-    ((backing-store-levels store) store)))
+    (backing-store-levels store)))
 
 ; Returns a procedure that can be used to count the number of non-default
 ; valued leafs between two leaf indexes
