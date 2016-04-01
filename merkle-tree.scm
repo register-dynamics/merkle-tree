@@ -700,6 +700,7 @@
 (define (sparse-merkle-tree-hash tree #!optional (level (merkle-tree-levels tree)) (start 0) (end (expt 2 level)))
 
   (define (empty-tree-hash primitive default-leaf level)
+    ; memoize this mofo
     (if (= 0 level)
       (leaf-hash primitive default-leaf)
       (let ((h (empty-tree-hash primitive default-leaf (- level 1))))
