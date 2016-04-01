@@ -36,7 +36,7 @@
 
 
 ;;; Test the Cryptographic Components from RFC 6962
-(test-begin "Test the Cryptographic Components from RFC 6962")
+(test-begin "Test the Cryptographic Components")
 
 
 ; Description of the reference tree that is used for the tests.
@@ -80,16 +80,16 @@
     #${606162636465666768696a6b6c6d6e6f}))
 
 
-;; Test the Merkle Tree hashing algorithm
+;; Test the Dense Merkle Tree hashing algorithm
 (test-group
- "Test the Merkle Tree hashing algorithm"
+ "Test the Dense Merkle Tree hashing algorithm"
 
 ; The hash of an empty tree is the hash of the empty string.
 ; https://github.com/google/certificate-transparency/blob/master/cpp/merkletree/merkle_tree_test.cc#L249
 (test
   "The hash of an empty tree is the hash of the empty string."
   #${e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
-  (merkle-tree-hash
+  (dense-merkle-tree-hash
     (list->merkle-tree sha256-primitive '())))
 
 ; https://github.com/google/certificate-transparency/blob/master/cpp/merkletree/merkle_tree_test.cc#L269
@@ -115,16 +115,40 @@
 	    (test
 	      "Root hash"
 	      (list-ref roots (- n 1))
-	      (merkle-tree-hash tree))
+	      (dense-merkle-tree-hash tree))
 	    (let loop ((n 1))
 	      (if (<= n (merkle-tree-size tree))
 		(begin
 		  (test ; Test each potential sub-tree has the correct root hash.
 		    (conc "First " n " leaves")
 		    (list-ref roots (- n 1))
-		    (merkle-tree-hash tree 0 n))
+		    (dense-merkle-tree-hash tree 0 n))
 		  (loop (+ 1 n))))))
 	  (loop (+ 1 n))))))))
+
+; Test the Sparse Merkle Tree hashing algorithm
+(test-group
+  "Test the Sparse Merkle Tree hashing algorithm"
+
+(test
+  "The hash of an empty tree is the hash of the empty string."
+  #${e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
+  (sparse-merkle-tree-hash
+    (list->merkle-tree sha256-primitive '())))
+
+; Test that the sparse algorithm matches the dense algorithm for full trees
+(test-group
+  "Test that the sparse algorithm matches the dense algorithm for full trees"
+  (let loop ((n 1))
+    (if (<= n (length reference-leaves))
+      (let ((tree (list->merkle-tree sha256-primitive (take reference-leaves n))))
+	(test
+	  (conc "Tree with " n " leaves")
+	  (dense-merkle-tree-hash  tree)
+	  (sparse-merkle-tree-hash tree))
+	(loop (* 2 n)))))))
+
+
 
 
 ;; Test the Merkle Audit Path
@@ -151,7 +175,7 @@
   (test
     "Checking Reference Tree Root Hash"
     #${5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328}
-    (merkle-tree-hash tree 0))
+    (dense-merkle-tree-hash tree 0))
 
   (test-group
     "Test some Audit Paths in the reference tree."
@@ -188,7 +212,7 @@
   (test
     "Checking Reference Tree Root Hash"
     #${5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328}
-    (merkle-tree-hash tree 0))
+    (dense-merkle-tree-hash tree 0))
 
   (test-group
     "Test some Proofs in the reference tree."

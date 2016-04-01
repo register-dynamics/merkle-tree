@@ -2,7 +2,7 @@
 ;;; Merkle Trees
 ;;;
 ;;; Here we provide an implementation of Merkle Hash Trees as used in Google's
-;;; Certificate Transparency work.
+;;; Certificate Transparency and Revocation Transparency work.
 ;;;
 ;;; Cryptographic Components from RFC 6962 (Certificate Transparency)
 ;;; http://tools.ietf.org/html/rfc6962
@@ -12,6 +12,10 @@
 ;;;   + Dense Merkle Hash Trees
 ;;;   + Merkle Audit Paths
 ;;;   + Merkle Consistency Proofs
+;;;
+;;; An implementation of Ben Laurie's "Verifiable Maps" as per
+;;; http://sump2.links.org/files/RevocationTransparency.pdf
+;;;   + Sparse Merkle Hash Trees
 ;;;
 ;;;
 ;;;  Copyright (C) 2016, Andy Bennett, Crown Copyright (Government Digital Service).
@@ -42,10 +46,13 @@
 	(make-merkle-tree
 	 merkle-tree?
 	 merkle-tree-size
+	 merkle-tree-levels
 	 list->merkle-tree
 	 ;merkle-tree-append!
 
 	 merkle-tree-hash
+	 dense-merkle-tree-hash
+	 sparse-merkle-tree-hash
 	 merkle-audit-path
 	 merkle-consistency-proof
 	 )
@@ -57,6 +64,7 @@
 
 ; Eggs - http://wiki.call-cc.org/chicken-projects/egg-index-4.html
 (use dyn-vector message-digest)
+(use numbers) ; The Sparse Merkle Tree needs some *really* big numbers!
 
 
 
@@ -97,6 +105,20 @@
 
 (define (backing-store-size  store) dynvector-length)
 
+(define (backing-store-levels store)
+  (lambda (store)
+    (let ((size ((backing-store-size store) store)))
+      (if (= 0 size)
+	0
+	(ceiling (log2 size))))))
+
+; For a dense Merkle Tree stored in a dyn-vector every leaf is always present
+(define (backing-store-count-leaves-in-range store)
+  (lambda (start end)
+    (assert (<= end ((backing-store-size store) store)))
+    (assert (<= start end))
+    (- end start)))
+
 
 
 ;;; Dense Merkle Hash Trees
@@ -136,6 +158,19 @@
   (assert (merkle-tree? tree))
   (let ((store (merkle-tree-backing-store tree)))
     ((backing-store-size store) store)))
+
+; Returns the number of levels of interior nodes in the tree
+(define (merkle-tree-levels tree)
+  (assert (merkle-tree? tree))
+  (let ((store (merkle-tree-backing-store tree)))
+    ((backing-store-levels store) store)))
+
+; Returns a procedure that can be used to count the number of non-default
+; valued leafs between two leaf indexes
+(define (merkle-tree-count-leaves-in-range tree)
+  (assert (merkle-tree? tree))
+  (let ((store (merkle-tree-backing-store tree)))
+    (backing-store-count-leaves-in-range store)))
 
 (define (dyn-vector->merkle-tree digest-primitive dynvector)
   (make-merkle-tree
@@ -183,7 +218,7 @@
 
 ; Calculates the Merkle Tree Hash for an ordered set of leaf nodes [start..end).
 ; "The output is a single 32-byte Merkle Tree Hash."
-(define (merkle-tree-hash tree #!optional (start 0) (end (merkle-tree-size tree)))
+(define (dense-merkle-tree-hash tree #!optional (start 0) (end (merkle-tree-size tree)))
   (assert (<= start end))
 
   (let* ((primitive (merkle-tree-digest-primitive tree))
@@ -220,6 +255,79 @@
 	    primitive
 	    (merkle-tree-hash tree start       (+ k start))
 	    (merkle-tree-hash tree (+ k start) end)))))))
+
+
+; Calculates the Merkle Tree Hash for a sparsely populated Merkle Tree of
+; uncomputable size.
+;
+; level: The number of levels in the Merkle Tree. A Level of n gives a tree
+;        with 2^n possible leaf nodes.
+;
+; The leaf nodes reachable from this part of the Merkle Tree are in the range
+; [start..end).
+;
+; Returns a blob containing the hash.
+;
+; The hashing algorithm must be cryptographically strong as we do not support
+; chains of entries in the leaf of the tree: each leaf can contain no more than
+; one entry at a time and we expect that the hash algorithm returns a unique,
+; non-colliding hash for each distinct data entry.
+;
+; Trees hashed with this procedure must always be "full", albeit with most of
+; the leaves containing the default value.
+(define (sparse-merkle-tree-hash tree #!optional (level (merkle-tree-levels tree)) (start 0) (end (expt 2 level)))
+
+  (define (empty-tree-hash primitive default-leaf level)
+    (if (= 0 level)
+      (leaf-hash primitive default-leaf)
+      (let ((h (empty-tree-hash primitive default-leaf (- level 1))))
+	(interior-hash primitive h h))))
+
+  (assert (<= start end))
+  (assert (let ((size (merkle-tree-size tree)))
+	    (if (= 0 size)
+	      (<= end 1)
+	      (<= end size))))
+  (assert (let ((n (- end start))) ; check this part of the tree has a full complement of leaf nodes
+	    (or (= 0 n)
+		(let ((pow2 (log2 n)))
+		  (= pow2 (ceiling pow2))))))
+
+  (let* ((primitive      (merkle-tree-digest-primitive tree))
+	 (ref            (merkle-tree-ref tree))
+	 (leaves-between (merkle-tree-count-leaves-in-range tree)))
+
+    (cond
+      ((and
+	 (= 0 level)
+	 (= 0 (merkle-tree-size tree)))
+       ; "The hash of an empty list is the hash of an empty string"
+       ;   -- RFC6962, Section 2.1
+       (message-digest-string primitive "" 'blob))
+
+      ((= 1 (- end start))
+       ; "The hash of a list with one entry (also known as a leaf hash) is:
+       ;
+       ;  MTH({d(0)}) = SHA-256(0x00 || d(0))."
+       ;   -- RFC6962, Section 2.1
+       (assert (= 0 level))
+       (leaf-hash primitive (ref start)))
+
+      ; If there are some non-default valued leaves in this part of the tree then we
+      ; need to calculate the hash. Otherwise, we use the hash of an empty sub-tree.
+      ((> (leaves-between start end) 0)
+       (assert (> level 0))
+       (let ((midpoint (inexact->exact (+ (/ (- end start) 2) start))))
+	 (interior-hash
+	   primitive
+	   (sparse-merkle-tree-hash tree (- level 1) start    midpoint)
+	   (sparse-merkle-tree-hash tree (- level 1) midpoint end))))
+
+      (else
+	(empty-tree-hash primitive #f level)))))
+
+
+(define merkle-tree-hash dense-merkle-tree-hash)
 
 
 ; Merkle Audit Paths
