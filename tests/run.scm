@@ -28,8 +28,7 @@
 
 ;;; $ csi -ns tests/run.scm
 
-(load "merkle-tree")
-(import merkle-tree)
+(use merkle-tree)
 (use test)
 
 (use sha2)

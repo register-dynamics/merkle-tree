@@ -1,0 +1,14 @@
+; These two instructions will produce statically and dynamically linkable
+; object files "merkle-tree.o" and "merkle-tree.so" respectively.
+(compile -s -O2 -d1 merkle-tree.scm -j merkle-tree)
+(compile -s merkle-tree.import.scm -O2 -d0)
+(compile -c -O2 -d1 merkle-tree.scm -unit merkle-tree -j merkle-tree)
+
+(install-extension
+  ; Name of your extension:
+  'merkle-tree
+  ; Files to install for your extension:
+  '("merkle-tree.o" "merkle-tree.so" "merkle-tree.import.so")
+  ; Assoc list with properties for your extension:
+  '((version "0.1") ;; version number should be a string
+    (static "merkle-tree.o"))) ;; for static linking
