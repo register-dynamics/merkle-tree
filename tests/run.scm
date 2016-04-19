@@ -124,7 +124,21 @@
 		    (list-ref roots n)
 		    (dense-merkle-tree-hash tree 0 n))
 		  (loop (+ 1 n))))))
-	  (loop (+ 1 n))))))))
+	  (loop (+ 1 n))))))
+
+  (test-group
+    "Incremental roots from building the reference tree by updating a tree leaf-by-leaf."
+    (let loop ((n 0)
+	       (tree (list->merkle-tree sha256-primitive (take reference-leaves 0))))
+      (test
+	(conc "Tree with " n " leaves")
+	(list-ref roots n)
+	(dense-merkle-tree-hash tree))
+      (if (< n (length reference-leaves))
+	(loop (+ 1 n) (merkle-tree-append tree `(,(list-ref reference-leaves n)))))))
+
+
+  ))
 
 ; Test the Sparse Merkle Tree hashing algorithm
 (test-group
