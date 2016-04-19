@@ -101,18 +101,19 @@
 
 ;;; Backing store for the data in a Merkle Hash Tree.
 
-(define (make-backing-store #!key store ref size levels count-leaves-in-range)
+(define (make-backing-store #!key store ref update size levels count-leaves-in-range default-leaf)
   `(backing-store
      ,store
      ,ref
      ,size
      ,levels
-     ,count-leaves-in-range))
+     ,count-leaves-in-range
+     ,default-leaf))
 
 (define (backing-store? store)
  (and
   (list? store)
-  (= 6 (length store))
+  (= 7 (length store))
   (eqv? 'backing-store (car store))))
 
 ; Takes a backing store and returns the ref procedure for it.
@@ -141,6 +142,9 @@
 ; backing store.
 (define backing-store-count-leaves-in-range sixth)
 
+; Returns the default leaf value. Only really important for a sparse tree.
+(define backing-store-default-leaf seventh)
+
 
 ;;; A quick and dirty backing store that uses a dyn-vector.
 ;;; For now we store the data in a dyn-vector but later we might want to store
@@ -158,7 +162,8 @@
 			     ; For a dense Merkle Tree stored in a dyn-vector every leaf is always present
 			     (assert (<= end   (dynvector-length vector)))
 			     (assert (<= start end))
-			     (- end start))))
+			     (- end start))
+    default-leaf: #f))
 
 (define (dynvector->dyn-vector-backing-store dynvector)
   (make-dyn-vector-backing-store dynvector))
@@ -368,7 +373,11 @@
 	   (sparse-merkle-tree-hash tree (- level 1) midpoint end))))
 
       (else
-	(empty-tree-hash primitive #f level)))))
+	(empty-tree-hash
+	  primitive
+	  (backing-store-default-leaf
+	    (merkle-tree-backing-store tree))
+	  level)))))
 
 
 (define merkle-tree-hash dense-merkle-tree-hash)
