@@ -56,12 +56,15 @@
 	 sparse-merkle-tree-hash
 	 merkle-audit-path
 	 merkle-consistency-proof
+
+	 make-dense-backing-store
+	 make-sparse-backing-store
 	 )
 
 (import chicken scheme)
 
 ; Units - http://api.call-cc.org/doc/chicken/language
-(use data-structures srfi-1)
+(use data-structures srfi-1 srfi-4)
 
 ; Eggs - http://wiki.call-cc.org/chicken-projects/egg-index-4.html
 (use dyn-vector message-digest)
@@ -184,6 +187,64 @@
 
 (define (dynvector->dyn-vector-backing-store dynvector)
   (make-dyn-vector-backing-store dynvector))
+
+(define make-dense-backing-store make-dyn-vector-backing-store)
+
+
+; Makes a backing store that stores the non-default leaves in an a-list mapping
+; leaf indexes to values.
+(define (make-sparse-backing-store levels #!optional (default #f) (lst '()))
+
+  (define (blob->number blob)
+    (let loop ((int   0)
+	       (bytes  (u8vector->list
+			 (blob->u8vector/shared blob))))
+      (if (null? bytes)
+	int
+	(loop
+	  (bitwise-ior
+	    (arithmetic-shift int 8)
+	    (car bytes))
+	  (cdr bytes)))))
+
+  (define (->number n)
+    (cond
+      ((number? n) n)
+      ((blob? n)  (blob->number n))
+      (else
+	(abort (conc n " cannot be used by sparse-backing-store.")))))
+
+  (make-backing-store
+    store:  lst
+    ref:    (let* ((max (expt 2 levels))
+		   (ref (lambda (n)
+			   (assert (>= n 0))
+			   (assert (< n max))
+			   (alist-ref n lst = default))))
+	      (lambda (n)
+	       (ref (->number n))))
+    update: (let* ((max (expt 2 levels))
+		   (update (lambda (n value)
+			     (assert (>= n 0))
+			     (assert (< n max))
+			     (alist-update n value lst =))))
+	      (lambda (n value)
+		(make-sparse-backing-store
+		  levels
+		  default
+		  (update (->number n) value))))
+    size:   (constantly (expt 2 levels))
+    levels: (constantly levels)
+    count-leaves-in-range: (lambda (start end)
+			     (fold ; naive and stupid linear search
+			       (lambda (v s)
+				 (assert (pair? v))
+				 (if (and (>= (car v) start) (< (car v) end))
+				   (+ 1 s)
+				   s))
+			       0
+			       lst))
+    default-leaf: default))
 
 
 
