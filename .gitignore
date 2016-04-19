@@ -1,0 +1,5 @@
+*.import.so
+*.import.scm
+*.o
+*.so
+salmonella.log
