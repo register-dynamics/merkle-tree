@@ -70,9 +70,11 @@
 
 ;;; Supporting Maths
 
-; logb(x) = (logd(x) / logd(b))
-(define (log2 n)
-  (/ (log n) (log 2)))
+; Returns _log2(n)_
+; (floor-log2 8) -> 3
+; (floor-log2 9) -> 3
+(define (floor-log2 n)
+  (sub1 (integer-length n)))
 
 ; Returns the largest power of 2 *smaller* than n which is
 ;  2^(floor(log2(n-1))) for n > 1.
@@ -80,8 +82,19 @@
 ; The largest power of 2 less than or equal to n is
 ;   2^(floor(log2(n))) for n > 0.
 (define (pow2<n n)
- (assert (> n 1))
-  (expt 2 (inexact->exact (floor (log2 (- n 1))))))
+  (arithmetic-shift 1 (floor-log2 (- n 1))))
+
+; Returns the exponent of the smallest power of 2 that is >= n.
+; (log2-pow2>=n 7) -> 3
+; (log2-pow2>=n 8) -> 3
+; (log2-pow2>=n 9) -> 4
+(define (log2-pow2>=n n)
+  (+ 1 (floor-log2 (- n 1))))
+
+; Says whether n is a power of 2 (or 0).
+(define (pow2? n)
+  (= (arithmetic-shift 1 (sub1 (integer-length n))) n))
+
 
 
 ;;; Supporting ADTs
@@ -140,10 +153,7 @@
     ref:    (cut dynvector-ref    vector <>)
     size:   (cut dynvector-length vector)
     levels: (lambda ()
-	      (let ((size (dynvector-length vector)))
-		(if (= 0 size)
-		  0
-		  (ceiling (log2 size)))))
+	      (log2-pow2>=n (dynvector-length vector)))
     count-leaves-in-range: (lambda (start end)
 			     ; For a dense Merkle Tree stored in a dyn-vector every leaf is always present
 			     (assert (<= end   (dynvector-length vector)))
@@ -325,10 +335,7 @@
 	    (if (= 0 size)
 	      (<= end 1)
 	      (<= end size))))
-  (assert (let ((n (- end start))) ; check this part of the tree has a full complement of leaf nodes
-	    (or (= 0 n)
-		(let ((pow2 (log2 n)))
-		  (= pow2 (ceiling pow2))))))
+  (assert (pow2? (- end start))) ; check this part of the tree has a full complement of leaf nodes
 
   (let* ((primitive      (merkle-tree-digest-primitive tree))
 	 (ref            (merkle-tree-ref tree))
