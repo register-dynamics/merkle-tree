@@ -902,7 +902,16 @@
 #;(
 
 (load "merkle-tree")
-(use merkle-tree sha2)
+(use numbers merkle-tree sha2)
+
+(define b (make-sparse-backing-store 256 "" '()))
+(define b (make-sparse-backing-store 256 "" '((10 . "hello"))))
+(define t (make-merkle-tree sha256-primitive b))
+
+(merkle-tree-size t)
+(merkle-tree-levels t)
+(sparse-merkle-tree-hash t)
+
 (merkle-tree-size (list->merkle-tree sha256-primitive '()))
 (sparse-merkle-tree-hash (list->merkle-tree sha256-primitive '()))
 
