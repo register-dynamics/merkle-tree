@@ -48,7 +48,8 @@
 	 merkle-tree-size
 	 merkle-tree-levels
 	 list->merkle-tree
-	 ;merkle-tree-append!
+	 merkle-tree-update
+	 merkle-tree-append
 
 	 merkle-tree-hash
 	 dense-merkle-tree-hash
@@ -108,12 +109,13 @@
      ,size
      ,levels
      ,count-leaves-in-range
-     ,default-leaf))
+     ,default-leaf
+     ,update))
 
 (define (backing-store? store)
  (and
   (list? store)
-  (= 7 (length store))
+  (= 8 (length store))
   (eqv? 'backing-store (car store))))
 
 ; Takes a backing store and returns the ref procedure for it.
@@ -145,6 +147,13 @@
 ; Returns the default leaf value. Only really important for a sparse tree.
 (define backing-store-default-leaf seventh)
 
+; Takes a backing store and returns a procedure to do a functional update on
+; it.
+; The procedure must be a procedure of three arguments: leaf index, value and
+; handle. The procedure must return a new backing store that is equivalent to
+; the original backing store with the requested modification.
+(define backing-store-update eighth)
+
 
 ;;; A quick and dirty backing store that uses a dyn-vector.
 ;;; For now we store the data in a dyn-vector but later we might want to store
@@ -155,6 +164,14 @@
   (make-backing-store
     store:  vector
     ref:    (cut dynvector-ref    vector <>)
+    update: (lambda (n value)
+	      ; This is inefficient as dynvector does not support functional updates!
+	      (make-dyn-vector-backing-store
+		(let ((new (dynvector-copy vector)))
+		  (dynvector-set!
+		    new
+		    n value)
+		  new)))
     size:   (cut dynvector-length vector)
     levels: (lambda ()
 	      (log2-pow2>=n (dynvector-length vector)))
@@ -236,8 +253,25 @@
     (dyn-vector->merkle-tree digest-primitive (make-dynvector 0 #f))
     (dyn-vector->merkle-tree digest-primitive (list->dynvector lst #f))))
 
-; TODO: (define (merkle-tree-append! tree list) ...)
+(define (merkle-tree-update leaf-number value tree)
+  (assert (merkle-tree? tree))
+  (let ((store (merkle-tree-backing-store tree)))
+    (make-merkle-tree
+      (merkle-tree-digest-primitive tree)
+      ((backing-store-update store) leaf-number value))))
 
+; This assumes that we are filling a tree up from left to right.
+; Work out the size of the tree then map over the list and update the elements
+; into the subsequent slots.
+; This naive implementation will cause (- (length lst) 1) redundant merkle-tree
+; objects to be allocated.
+(define (merkle-tree-append tree lst)
+  (assert (merkle-tree? tree))
+  (fold
+    merkle-tree-update ; n value tree
+    tree
+    (iota (length lst) (merkle-tree-size tree))
+    lst))
 
 
 
