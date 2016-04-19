@@ -899,5 +899,18 @@
 
 )
 
+#;(
+
+(load "merkle-tree")
+(use merkle-tree sha2)
+(merkle-tree-size (list->merkle-tree sha256-primitive '()))
+(sparse-merkle-tree-hash (list->merkle-tree sha256-primitive '()))
+
+#;3> (sparse-merkle-tree-hash (list->merkle-tree sha256-primitive '("a" "b" "c" "d")))
+#${33376a3bd63e9993708a84ddfe6c28ae58b83505dd1fed711bd924ec5a6239f0}
+#;4> (dense-merkle-tree-hash (list->merkle-tree sha256-primitive '("a" "b" "c" "d")))
+#${33376a3bd63e9993708a84ddfe6c28ae58b83505dd1fed711bd924ec5a6239f0}
+
 	      ; TODO: Check what happens if we add a leaf that isn' the next available leaf number
 
+)
