@@ -182,7 +182,7 @@
   (assert (backing-store? backing-store))
 
   `(merkle-tree
-     (digest-primitive . ,(digest-primitive))
+     (digest-primitive . ,digest-primitive)
      (backing-store    . ,backing-store)))
 
 (define (merkle-tree? tree)
@@ -273,7 +273,7 @@
 (define (dense-merkle-tree-hash tree #!optional (start 0) (end (merkle-tree-size tree)))
   (assert (<= start end))
 
-  (let* ((primitive (merkle-tree-digest-primitive tree))
+  (let* ((primitive ((merkle-tree-digest-primitive tree)))
 	 (ref       (merkle-tree-ref tree)))
 
     (cond
@@ -342,7 +342,7 @@
 	      (<= end size))))
   (assert (pow2? (- end start))) ; check this part of the tree has a full complement of leaf nodes
 
-  (let* ((primitive      (merkle-tree-digest-primitive tree))
+  (let* ((primitive      ((merkle-tree-digest-primitive tree)))
 	 (ref            (merkle-tree-ref tree))
 	 (leaves-between (merkle-tree-count-leaves-in-range tree)))
 
