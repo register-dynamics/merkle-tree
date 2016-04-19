@@ -160,7 +160,10 @@
 	  (conc "Tree with " n " leaves")
 	  (dense-merkle-tree-hash  tree)
 	  (sparse-merkle-tree-hash tree))
-	(loop (* 2 n)))))))
+	(loop (* 2 n))))))
+
+; Test that the sparse tree can be updated
+)
 
 
 
