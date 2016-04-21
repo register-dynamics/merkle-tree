@@ -66,7 +66,7 @@
 ;    |         |         |         |         |         |         |         |
 ;    |         |         |         |         |         |         |         |
 ;  #${}      #${00}   #${10}   #${2021}  #${3031}  #${40...} #${50...} #${60...}
-; Leaf 0    Leaf 1    Leaf 2    Leaf 3    Leaf 4    Leaf 5    Leaf 5    Leaf 6
+; Leaf 0    Leaf 1    Leaf 2    Leaf 3    Leaf 4    Leaf 5    Leaf 6    Leaf 7
 ;
 (define reference-leaves
   '(#${}
