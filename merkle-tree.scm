@@ -59,6 +59,8 @@
 
 	 make-dense-backing-store
 	 make-sparse-backing-store
+	 open-sqlite-backing-store
+	 create-sqlite-backing-store
 	 )
 
 (import chicken scheme)
@@ -245,6 +247,279 @@
 			       0
 			       lst))
     default-leaf: default))
+
+
+(use sql-de-lite pool)
+; This backing-store persists both Dense and Sparse Merkle Trees to an SQLite
+; Database.
+;
+; This requires an SQLite database with the following tables:
+;
+;   Metadata:
+;     + leaves         : [ id leaf version ] content
+;     + tree-versions  : [ id version ] leaf-count
+;     + tree-info      : [ id ] sparse? default-leaf  ; these are required data
+;     + tree-advice    : [ id ] name digest-algorithm ; these are advisory data
+;     + store-info     : [ store ] max-id ; needed to avoid creation races and reusing identifiers
+;
+;   Contents:
+;     + [ digest-primitive hash ] content
+;
+;
+; db-pool: A pool of database connections to use for accessing the SQLite
+;          database. This pool should be created with the 'pool' egg.
+;
+; sparse?: #t for a Sparse Merkle Tree, #f for a Dense Merkle Tree
+;
+; name   : A symbolic name for the tree. Optional but if specified, it must be
+;          unique across the store.
+;
+; digest-algorithm : A human readable name for the digest algorithm used. This
+;                    is optional and not used in the logic.
+;
+;
+
+; Creates the required schema in an SQLite Database.
+; Assumes that the table names it wants are not already in-use.
+;
+(define (initialise-sqlite-backing-store db-pool)
+  (call-with-value-from-pool
+    db-pool
+    (lambda (db)
+      (with-transaction
+	db
+	(lambda ()
+	  (for-each
+	    (lambda (q)
+	      (exec
+		(sql db q)))
+	    '("CREATE  TABLE \"main\".\"store-info\" (\"store\" TEXT PRIMARY KEY  NOT NULL , \"next-id\" INTEGER);"
+	      "INSERT INTO \"main\".\"store-info\" (\"store\",\"next-id\") VALUES (\"this\", 0);"
+	      "CREATE  TABLE \"main\".\"tree-info\" (\"id\" INTEGER PRIMARY KEY  NOT NULL , \"sparse?\" INTEGER, \"levels\" INTEGER, \"default-leaf\" BLOB);"
+	      "CREATE  TABLE \"main\".\"tree-advice\" (\"id\" INTEGER PRIMARY KEY  NOT NULL , \"name\" TEXT UNIQUE , \"digest-algorithm\" TEXT);"
+	      "CREATE  TABLE \"main\".\"tree-versions\" (\"id\" INTEGER NOT NULL , \"version\" INTEGER NOT NULL , \"leaf-count\" INTEGER NOT NULL , PRIMARY KEY (\"id\", \"version\"));"
+	      "CREATE  TABLE \"main\".\"leaves\" (\"id\" INTEGER NOT NULL , \"leaf\" INTEGER NOT NULL , \"version\" INTEGER NOT NULL , \"content\" BLOB, PRIMARY KEY (\"id\", \"leaf\", \"version\"));"))
+	  #t)))))
+
+
+; Creates a Merkle Tree that persists itself to an SQLite database.
+; This allocates a new merkle-tree in a pre-existing SQLite database and
+; returns the ID of the new Merkle Tree.
+;
+(define (create-sqlite-backing-store db-pool sparse? #!key name digest-algorithm default-leaf levels)
+
+  (if sparse?
+    (assert levels
+	    "Sparse Merkle Trees must have a number of levels specified!"))
+
+  (if (not sparse?)
+    (assert (not levels)
+	    "Dense Merkle Trees must not have a number of levels specified!"))
+
+  (if (not sparse?)
+    (assert (not default-leaf)
+	    "Dense Merkle Trees must not have a default-leaf specified!"))
+
+  (call-with-value-from-pool
+    db-pool
+    (lambda (db)
+
+      (with-transaction
+	db
+	(lambda ()
+
+	  (define (allocate-id)
+	    (let ((id (car (exec (sql db "SELECT \"next-id\" FROM \"store-info\" WHERE \"store\" = \"this\";")))))
+	      (assert
+		(= 1
+		   (exec (sql db "UPDATE \"store-info\" SET \"next-id\" = (?1 + 1) WHERE \"store\" = \"this\" AND \"next-id\" = ?1;") id)))
+	      id))
+
+	  (define (save-info id sparse? default-leaf)
+	    (exec
+	      (sql db "INSERT INTO \"tree-info\" (\"id\", \"sparse?\", \"levels\", \"default-leaf\") VALUES (?1, ?2, ?3, ?4);")
+	      id                      ; id
+	      (if sparse? 1 '())      ; sparse?
+	      (if sparse? levels '()) ; levels
+	      (or default-leaf '()))) ; default-leaf
+
+	  (define (save-advice id name digest-algorithm)
+	    (exec
+	      (sql db "INSERT INTO \"tree-advice\" (\"id\", \"name\", \"digest-algorithm\") VALUES (?1, ?2, ?3);")
+	      id                           ; id
+	      (or name '())                ; name
+	      (if digest-algorithm         ; digest-algorithm
+		(->string digest-algorithm)
+		'())))
+
+	  (define (create-initial-version id)
+	    (exec
+	      (sql db "INSERT INTO \"tree-versions\" (\"id\", \"version\", \"leaf-count\") VALUES (?1, ?2, ?3);")
+	      id 0 0))
+
+
+	  ; Allocate a unique ID for this tree.
+	  ; Save the info and advice about the tree.
+	  (let ((id (allocate-id)))
+	    (save-info              id sparse? default-leaf)
+	    (save-advice            id name    digest-algorithm)
+	    (create-initial-version id)
+	    id))))))
+
+; Opens a pre-existing backing store that persists itself to an SQLite
+; database.
+; This finds an existing merkle-tree in a pre-existing SQLite database and
+; returns a backing-store object.
+;
+(define (open-sqlite-backing-store db-pool id version)
+
+  (define (db-bool x)
+    (cond
+      ((null? x) #f)
+      ((= 1 x)   #t)
+      (else
+	(abort (conc "Found " x " in database but expected '() or 1.")))))
+
+  (define (db-optional x)
+    (if (null? x)
+      #f
+      x))
+
+  (call-with-value-from-pool
+    db-pool
+    (lambda (db)
+
+      (define (read-tree-info id)
+	(exec
+	  (sql db "SELECT \"id\", \"sparse?\", \"levels\", \"default-leaf\" FROM \"tree-info\" WHERE \"id\" = ?1;")
+	  id))
+
+      (define (read-version-info id version)
+	(exec
+	  (sql db "SELECT \"id\", \"version\", \"leaf-count\" FROM \"tree-versions\" WHERE \"id\" = ?1 AND \"version\" = ?2;")
+	  id version))
+
+
+      (let ((tree-info    (read-tree-info id)))
+	(if (null? tree-info)
+	  (abort (conc "Could not find tree with id " id))
+	  (let* ((id*          (first  tree-info))
+		 (sparse?      (db-bool     (second tree-info)))
+		 (levels       (db-optional (third  tree-info)))
+		 (default-leaf (db-optional (fourth tree-info)))
+		 (version-info (read-version-info id version)))
+	    (if (null? version-info)
+	      (abort (conc "Tree with id " id " does not exist at version " version))
+	      (let ((leaf-count   (third version-info)))
+
+		(assert (equal? id id*))
+
+		(make-sqlite-backing-store db-pool id version sparse? leaf-count levels default-leaf)))))))))
+
+; Makes a backing store that persists itself to an SQLite database.
+; This requires a pre-allocated merkle-tree in a pre-existing SQLite database
+; and returns a backing-store object.
+;
+(define (make-sqlite-backing-store db-pool id version sparse? leaf-count levels default-leaf)
+
+  (define (SELECT-leaf db id n version)
+    (exec
+      (sql db "SELECT \"version\", \"content\" FROM \"leaves\" WHERE \"id\" = ?1 AND \"leaf\" = ?2 AND \"version\" <= ?3;")
+      id n version))
+
+   (use extras)
+  (define (ref db version n)
+   (pp (conc "getting n " n " @ version " version))
+    (let ((value (SELECT-leaf db id n version)))
+      (if (null? value)
+	default-leaf
+	(second value))))
+
+  ;(define l '(0 2 4 6 8 10 12 14 16))
+  ;(define l '(0 1 3 5 7 9 11 13 15))
+  ;(define l '(0 16 17 18 19 20 21 22 23))
+  (define l '(0 1 2 3 4 5 6 7 8))
+
+  (define (next-version db)
+    ;(let ((next-version (add1 version)))
+    (let ((next-version (list-ref l (add1 (list-index (cut = version <>) l)))))
+      (assert (null? (exec ; This is just open-sqlite-backing-store's read-version-info.
+		       (sql db "SELECT \"id\", \"version\", \"leaf-count\" FROM \"tree-versions\" WHERE \"id\" = ?1 AND \"version\" = ?2;")
+		       id next-version))
+	      (conc "next-version: Tree " id " already exists at version " next-version))
+      next-version))
+
+  (make-backing-store
+    store:  `(,db-pool ,id ,version)
+    ref:    (lambda (n)
+	      (call-with-value-from-pool
+		db-pool
+		(lambda (db)
+		  (ref db version n))))
+    update: (lambda (n value)
+	      (call-with-value-from-pool
+		db-pool
+		(lambda (db)
+		  ; number->blob if argument is a number (opposite of sparse-backing-store)
+		  (with-transaction
+		    db
+		    (lambda ()
+		      (let* ((new-version    (next-version db))
+			     ; Is this a new leaf or a mutation of an existing one?
+			     ; We use this to maintain the leaf count metadata.
+			     (new-leaf?      (null? (SELECT-leaf db id n version)))
+			     (new-leaf-count (+ (if new-leaf? 1 0) leaf-count)))
+			; Fix implied values for this leaf in other versions.
+			(let* ((next-version (exec ; exec only gets the first row of the result set which is exactly what we want.
+					       (sql db "SELECT \"id\", \"version\" FROM \"tree-versions\" WHERE \"id\" = ?1 AND \"version\" > ?2 ORDER BY \"version\";")
+					       id version)))
+			 (pp (conc "On version " version ", making new-version " new-version " and found potential next-version " next-version " for leaf " n))
+			  (pp (conc "next-version " next-version))
+			  (if (not (null? next-version)) ; There exists a tree with a higher version number...
+			    (let* ((next-version (second next-version))
+				   (_ (pp "looking up next-value"))
+				   (next-value   (SELECT-leaf db id n next-version)))
+			      (if (and (not (null? next-value)) (not (= next-version (first next-value)))) ; ...but no explicit value for this particular leaf.
+			       (begin
+				(pp (conc "got next-value " next-value))
+				(pp (conc "inserting version " version " of " n " as next-version " next-version))
+				(exec
+				  (sql db "INSERT INTO \"leaves\" (\"id\", \"leaf\", \"version\", \"content\") VALUES (?1, ?2, ?3, ?4);")
+				  id n next-version (ref db version n)))))))
+			; Insert the new value for this leaf.
+			(exec
+			  (sql db "INSERT INTO \"leaves\" (\"id\", \"leaf\", \"version\", \"content\") VALUES (?1, ?2, ?3, ?4);")
+			  id n new-version value)
+			; Record this version of the tree.
+			(assert
+			  (= 1
+			     (exec
+			       (sql db "INSERT INTO \"tree-versions\" (\"id\", \"version\", \"leaf-count\") VALUES (?1, ?2, ?3);")
+			       id new-version (+ (if new-leaf? 1 0) leaf-count))))
+			(make-sqlite-backing-store
+			  db-pool id new-version sparse? new-leaf-count levels default-leaf)))))))
+    size:   (if sparse?
+	      (constantly (expt 2 levels))
+	      (constantly leaf-count))
+    levels: (if sparse?
+	      (constantly levels)
+	      (lambda ()
+		(log2-pow2>=n leaf-count)))
+    count-leaves-in-range: (lambda (start end) ; Leaves in the range [start..end) that are populated with a value.
+			     (assert (<= start end))
+			     (if sparse?
+			       (call-with-value-from-pool
+				 db-pool
+				 (lambda (db)
+				   (first
+				     (exec
+				       (sql db "SELECT COUNT(DISTINCT \"leaf\") FROM \"leaves\" WHERE \"id\" = ?1 AND \"version\" <= ?2 AND \"leaf\" >= ?3 AND \"leaf\" < ?4;")
+				       id version start end))))
+			       (begin
+				 ; For a dense Merkle Tree every leaf is always present.
+				 (assert (<= end leaf-count))
+				 (- end start))))
+    default-leaf: default-leaf))
 
 
 
