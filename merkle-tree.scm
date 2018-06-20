@@ -400,8 +400,8 @@
 	       (k (pow2<n n)))
 	  (interior-hash
 	    primitive
-	    (merkle-tree-hash tree start       (+ k start))
-	    (merkle-tree-hash tree (+ k start) end)))))))
+	    (dense-merkle-tree-hash tree start       (+ k start))
+	    (dense-merkle-tree-hash tree (+ k start) end)))))))
 
 
 ; Calculates the Merkle Tree Hash for a sparsely populated Merkle Tree of
