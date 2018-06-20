@@ -699,6 +699,10 @@
 ; the leaves containing the default value.
 (define (sparse-merkle-tree-hash tree #!optional (level (merkle-tree-levels tree)) (start 0) (end (expt 2 level)))
 
+ ; TODO:
+ ;   + levels is now a function of the tree's backing store => it does not need to be an argument to this procedure
+ ;   + use leaves-between to merge this with the dense-merkle-tree-hash algorithm
+
   (define (empty-tree-hash primitive default-leaf level)
     ; memoize this mofo
     (if (= 0 level)
@@ -894,4 +898,6 @@
 		", n: " n ", k: " k))))))
 
 )
+
+	      ; TODO: Check what happens if we add a leaf that isn' the next available leaf number
 
