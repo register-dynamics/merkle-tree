@@ -59,6 +59,7 @@
 
 	 make-dense-backing-store
 	 make-sparse-backing-store
+	 initialise-sqlite-backing-store
 	 open-sqlite-backing-store
 	 create-sqlite-backing-store
 	 )
@@ -438,11 +439,11 @@
   ;(define l '(0 2 4 6 8 10 12 14 16))
   ;(define l '(0 1 3 5 7 9 11 13 15))
   ;(define l '(0 16 17 18 19 20 21 22 23))
-  (define l '(0 1 2 3 4 5 6 7 8))
+  ;(define l '(0 1 2 3 4 5 6 7 8))
 
   (define (next-version db)
-    ;(let ((next-version (add1 version)))
-    (let ((next-version (list-ref l (add1 (list-index (cut = version <>) l)))))
+    (let ((next-version (add1 version)))
+    ;(let ((next-version (list-ref l (add1 (list-index (cut = version <>) l)))))
       (assert (null? (exec ; This is just open-sqlite-backing-store's read-version-info.
 		       (sql db "SELECT \"id\", \"version\", \"leaf-count\" FROM \"tree-versions\" WHERE \"id\" = ?1 AND \"version\" = ?2;")
 		       id next-version))
@@ -456,7 +457,7 @@
 		db-pool
 		(lambda (db)
 		  (ref db version n))))
-    update: (lambda (n value)
+    update: (lambda (n value) ; LOOK, we need to be a bit more transactional about this. Is it really feasible to have one version per update???
 	      (call-with-value-from-pool
 		db-pool
 		(lambda (db)
