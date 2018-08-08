@@ -62,6 +62,9 @@
 	 initialise-sqlite-backing-store
 	 open-sqlite-backing-store
 	 create-sqlite-backing-store
+
+	 make-backing-store
+	 log2-pow2>=n
 	 )
 
 (import chicken scheme)
